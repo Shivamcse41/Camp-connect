@@ -1,3 +1,5 @@
+import os
+import shutil
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -42,5 +44,13 @@ embedding_model=get_embedding_model()
 
 # Step 4: Store embeddings in FAISS
 DB_FAISS_PATH="vectorstore/db_faiss"
+VECTOR_STORE_DIR = os.path.dirname(DB_FAISS_PATH)
+
+if os.path.exists(VECTOR_STORE_DIR):
+    print(f"Deleting existing vector store: {VECTOR_STORE_DIR}")
+    shutil.rmtree(VECTOR_STORE_DIR)
+    print("Vector store deleted.")
+
 db=FAISS.from_documents(text_chunks, embedding_model)
 db.save_local(DB_FAISS_PATH)
+print(f"New vector store created and saved at: {DB_FAISS_PATH}")

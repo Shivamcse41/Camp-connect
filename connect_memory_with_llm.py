@@ -43,7 +43,7 @@ rag_chain = create_retrieval_chain(db.as_retriever(search_kwargs={'k': 3}), comb
 
 
 # Now invoke with a single query
-user_query=input("Write Query Here: ")
+user_query=input("Ask a question about your documents: ")
 response=rag_chain.invoke({'input': user_query})
 print("RESULT: ", response["answer"])
 print("\nSOURCE DOCUMENTS:")
