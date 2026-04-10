@@ -5,13 +5,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
 import langchainhub as hub
-try:
-    from langchain.chains import create_retrieval_chain
-    from langchain.chains.combine_documents import create_stuff_documents_chain
-except ModuleNotFoundError:
-    # Compatibility for newer LangChain package splits.
-    from langchain_classic.chains import create_retrieval_chain
-    from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 
 from dotenv import load_dotenv
 load_dotenv()
