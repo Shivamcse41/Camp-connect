@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: campconnect-whatsapp
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn whatsapp_bot:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      - key: WHATSAPP_PHONE_ID
+        sync: false
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WEBHOOK_VERIFY_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
