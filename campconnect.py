@@ -4,13 +4,7 @@ import sqlite3
 
 import streamlit as st
 import firebase_admin
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
-from langchain_groq import ChatGroq
-import langchainhub as hub
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from smart_rag import smart_query
 
 
 ## Uncomment the following files if you're not using pipenv as your virtual environment manager
@@ -126,41 +120,8 @@ def save_user_data(email, user_details):
         print(f"Error saving user data: {e}")
 
 
-DB_FAISS_PATH="vectorstore/db_faiss"
-@st.cache_resource
-def get_vectorstore():
-    embedding_model=HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
-    db=FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
-    return db
-
-
-def set_custom_prompt(custom_prompt_template):
-    prompt=PromptTemplate(template=custom_prompt_template, input_variables=["context", "question"])
-    return prompt
-
-@st.cache_resource
-def get_rag_chain():
-    """
-    Creates and returns the RAG chain.
-    The chain is cached to avoid re-creation on every user message.
-    """
-    try:
-        vectorstore = get_vectorstore()
-        if vectorstore is None:
-            st.error("Failed to load the vector store. Please run `create_memory_for_llm.py` first.")
-            return None
-
-        GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-        GROQ_MODEL_NAME = "llama-3.1-8b-instant"
-        llm = ChatGroq(model=GROQ_MODEL_NAME, temperature=0.5, max_tokens=512, api_key=GROQ_API_KEY)
-
-        retrieval_qa_chat_prompt = hub.pull("langchain-ai/retrieval-qa-chat")
-        combine_docs_chain = create_stuff_documents_chain(llm, retrieval_qa_chat_prompt)
-        rag_chain = create_retrieval_chain(vectorstore.as_retriever(search_kwargs={'k': 3}), combine_docs_chain)
-        return rag_chain
-    except Exception as e:
-        st.error(f"Failed to create RAG chain: {str(e)}")
-        return None
+# Smart RAG pipeline is imported from smart_rag.py
+# No chain setup needed here — smart_query() handles everything lazily.
 
 
 def chatbot_interface():
@@ -232,19 +193,26 @@ def chatbot_interface():
         if user_prompt:
             st.chat_message('user').markdown(user_prompt)
             st.session_state.messages.append({'role':'user', 'content': user_prompt})
-                    
-            try: 
-                rag_chain = get_rag_chain()
-                if rag_chain is None:
-                    return
 
-                response=rag_chain.invoke({'input': user_prompt})
-                result=response["answer"]
-                st.chat_message('assistant').markdown(result)
-                st.session_state.messages.append({'role':'assistant', 'content': result})
-                
+            try:
+                with st.spinner("Thinking..."):
+                    result = smart_query(user_prompt)
+
+                answer = result["answer"]
+                source = result["source"]
+
+                # Display answer with source badge
+                with st.chat_message('assistant'):
+                    st.markdown(answer)
+                    st.caption(f"ℹ️ Source: {source}")
+
+                st.session_state.messages.append({
+                    'role': 'assistant',
+                    'content': f"{answer}\n\n_Source: {source}_"
+                })
+
                 if email:
-                    save_chat_message(email, user_prompt, result)
+                    save_chat_message(email, user_prompt, answer)
 
             except Exception as e:
                 st.error(f"An error occurred: {str(e)}")

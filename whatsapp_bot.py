@@ -1,7 +1,17 @@
+"""
+whatsapp_bot.py
+---------------
+CampConnect WhatsApp Bot — powered by the Smart 3-Phase RAG Navigator.
+
+Webhook flow:
+  1. Meta sends a POST to /webhook with the user's message.
+  2. We run it through smart_rag.smart_query() (FAISS → Web → LLM).
+  3. We send the formatted answer back via the WhatsApp Graph API.
+"""
+
 import os
 import requests
 from dotenv import load_dotenv
-from typing import Optional
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -9,138 +19,114 @@ from fastapi.responses import PlainTextResponse
 # Load environment variables
 load_dotenv()
 
-app = FastAPI(title="CampConnect WhatsApp Bot")
+app = FastAPI(title="CampConnect WhatsApp Bot - Smart Navigator")
 
 # --- Configuration ---
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID", "979160471956454")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_ID", "1064997016695390")
 WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "webhook")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-DB_FAISS_PATH="vectorstore/db_faiss"
 
-rag_chain: Optional[object] = None
-rag_chain_error: Optional[str] = None
-
-def get_rag_chain():
-    """
-    Lazily load the RAG pipeline.
-    This avoids high memory usage during process boot on Render.
-    """
-    global rag_chain, rag_chain_error
-    if rag_chain is not None:
-        return rag_chain
-    if rag_chain_error is not None:
-        return None
-
-    try:
-        from langchain_huggingface import HuggingFaceEmbeddings
-        from langchain_community.vectorstores import FAISS
-        from langchain_groq import ChatGroq
-        import langchainhub as hub
-        from langchain.chains import create_retrieval_chain
-        from langchain.chains.combine_documents import create_stuff_documents_chain
-
-        embedding_model = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
-        vectorstore = FAISS.load_local(
-            DB_FAISS_PATH,
-            embedding_model,
-            allow_dangerous_deserialization=True
-        )
-        GROQ_MODEL_NAME = "llama-3.1-8b-instant"
-        llm = ChatGroq(model=GROQ_MODEL_NAME, temperature=0.5, max_tokens=512, api_key=GROQ_API_KEY)
-        retrieval_qa_chat_prompt = hub.pull("langchain-ai/retrieval-qa-chat")
-        combine_docs_chain = create_stuff_documents_chain(llm, retrieval_qa_chat_prompt)
-        rag_chain = create_retrieval_chain(vectorstore.as_retriever(search_kwargs={'k': 3}), combine_docs_chain)
-        print("RAG Pipeline Loaded Successfully.")
-    except Exception as e:
-        rag_chain_error = str(e)
-        print(f"Error loading RAG pipeline: {rag_chain_error}")
-        rag_chain = None
-
-    return rag_chain
+# ---------------------------------------------------------------------------
+# WhatsApp sender
+# ---------------------------------------------------------------------------
 
 def send_whatsapp_message(phone_number: str, text: str):
-    """ Helper to send WhatsApp messages using Meta Graph API. """
+    """Send a WhatsApp text message via the Meta Graph API."""
     url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
     payload = {
         "messaging_product": "whatsapp",
         "to": phone_number,
         "type": "text",
-        "text": {"body": text}
+        "text": {"body": text},
     }
     response = requests.post(url, headers=headers, json=payload)
     if response.status_code != 200:
-        print(f"Failed to send message: {response.text}")
-    print(f"Sent message properly! Status: {response.status_code}")
+        print(f"[WhatsApp] Failed to send message: {response.text}")
+    else:
+        print(f"[WhatsApp] Message sent ✓ (status {response.status_code})")
     return response
+
+
+# ---------------------------------------------------------------------------
+# Webhook endpoints
+# ---------------------------------------------------------------------------
 
 @app.get("/webhook")
 async def verify_webhook(request: Request):
-    """ 
+    """
     Meta Webhook Verification endpoint.
-    Meta explicitly expects the 'hub.challenge' to be returned as plain text. 
+    Returns 'hub.challenge' as plain text so Meta confirms the callback URL.
     """
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
-    if mode and token:
-        if mode == "subscribe" and token == WEBHOOK_VERIFY_TOKEN:
-            print("Webhook verified successfully!")
-            return PlainTextResponse(content=challenge)
-    
-    raise HTTPException(status_code=403, detail="Verification failed")
+    if mode == "subscribe" and token == WEBHOOK_VERIFY_TOKEN:
+        print("[Webhook] Verification successful!")
+        return PlainTextResponse(content=challenge)
+
+    raise HTTPException(status_code=403, detail="Webhook verification failed")
+
 
 @app.post("/webhook")
 async def handle_whatsapp_message(request: Request):
     """
-    Main endpoint to receive webhook payloads from WhatsApp.
-    We extract the user message and run it through the RAG Chain.
+    Receive incoming WhatsApp messages and respond using the Smart RAG pipeline.
     """
     body = await request.json()
-    
+
     try:
-        # Check if the payload matches WhatsApp messaging schema
         entry = body.get("entry", [])[0]
         changes = entry.get("changes", [])[0]
         value = changes.get("value", {})
-        
-        # Check if it's a message
-        if "messages" in value:
-            message = value["messages"][0]
-            phone_number = message["from"]  # User's phone number
-            text = message.get("text", {}).get("body", "")  # Text content
-            
-            active_rag_chain = get_rag_chain()
-            if text and active_rag_chain:
-                print(f"Incoming WhatsApp message from {phone_number}: {text}")
-                
-                # Fetch RAG Response
-                response = active_rag_chain.invoke({'input': text})
-                result = response["answer"]
-                
-                # Dispatch answer to user
-                send_whatsapp_message(phone_number, result)
-            elif text:
-                fallback = (
-                    "Service is online, but the AI engine is still warming up. "
-                    "Please try again in a moment."
-                )
-                send_whatsapp_message(phone_number, fallback)
-                
-        # Meta expects a 200 OK simply indicating receipt.
-        return {"status": "success"}
-        
+
+        if "messages" not in value:
+            # Delivery receipts, status updates, etc. — acknowledge and move on
+            return {"status": "ok", "detail": "non-message event"}
+
+        message = value["messages"][0]
+        phone_number = message["from"]
+        text = message.get("text", {}).get("body", "").strip()
+
+        if not text:
+            return {"status": "ok", "detail": "empty message"}
+
+        print(f"[WhatsApp] Incoming from {phone_number}: {text}")
+
+        # ── Smart RAG pipeline ──────────────────────────────────────────────
+        from smart_rag import smart_query
+        result = smart_query(text)
+
+        answer = result["answer"]
+        source = result["source"]
+
+        # Append a small source footer so the user knows where the info came from
+        reply = f"{answer}\n\n_Source: {source}_"
+
+        send_whatsapp_message(phone_number, reply)
+
+    except IndexError:
+        # Payload without expected structure — safe to ignore
+        pass
     except Exception as e:
-        print(f"Error processing webhook: {e}")
+        print(f"[WhatsApp] Error processing message: {e}")
         return {"status": "error", "message": str(e)}
+
+    # Meta requires a 200 OK to acknowledge receipt
+    return {"status": "success"}
+
+
+@app.get("/health")
+async def health():
+    """Simple health-check endpoint for Render."""
+    return {"status": "healthy", "service": "CampConnect WhatsApp Bot"}
+
 
 if __name__ == "__main__":
     import uvicorn
-    # Optional execution block when script is ran directly.
     uvicorn.run(app, host="0.0.0.0", port=8000)
