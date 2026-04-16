@@ -15,3 +15,18 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      - key: HF_TOKEN
+        sync: false
+
+  - type: web
+    name: campconnect-ui
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run campconnect.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
