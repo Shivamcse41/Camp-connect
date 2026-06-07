@@ -51,7 +51,11 @@ class Settings:
                     url = url.replace("mysql://", "mysql+pymysql://", 1)
                 self.MYSQL_URL = url
             else:
-                self.MYSQL_URL = "mysql+pymysql://root:password@localhost:3306/campconnect"
+                raise RuntimeError(
+                    "No MySQL database configured. Set MYSQL_URL (or DATABASE_URL) as an environment variable, "
+                    "or provide individual MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, and MYSQL_DATABASE variables. "
+                    "See .env.example for details."
+                )
 
     # ── JWT Auth (used in Task 2) ─────────────────────────────────────────────
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-this-in-production-please")
